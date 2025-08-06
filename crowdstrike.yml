@@ -1,0 +1,45 @@
+---
+- name: Install CrowdStrike Falcon sensor with check
+  hosts: your_windows_servers
+  gather_facts: false
+  
+  tasks:
+    - name: Check if CrowdStrike Falcon service is installed
+      ansible.windows.win_service:
+        name: CSFalconService
+      register: cs_service_status
+      ignore_errors: true
+
+    - name: Report if CrowdStrike is already installed
+      ansible.builtin.debug:
+        msg: "CrowdStrike Falcon sensor is already installed and running. Skipping installation."
+      when: cs_service_status.state == 'running'
+
+    - name: Report if CrowdStrike is not installed
+      ansible.builtin.debug:
+        msg: "CrowdStrike Falcon service was not found. Proceeding with installation."
+      when: cs_service_status.state != 'running'
+
+  block:
+    - name: Run the CrowdStrike installation role
+      ansible.builtin.include_role:
+        name: crowdstrike.falcon.falcon_install
+      vars:
+        # Use the 'url' installation method
+        falcon_install_method: url
+        
+        # URL to the CrowdStrike installer file
+        falcon_url: "https://your-internal-repo.com/FalconSensor.exe"
+        
+        # Your CrowdStrike CID
+        falcon_cid: "YOUR_CROWDSTRIKE_CID"
+
+        # Additional arguments for Windows installation (optional)
+        falcon_windows_install_args: "/norestart"
+
+    - name: Report successful installation
+      ansible.builtin.debug:
+        msg: "CrowdStrike Falcon sensor installation task completed."
+      when: falcon_install_method is defined
+
+  when: cs_service_status.state != 'running'
