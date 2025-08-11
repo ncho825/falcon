@@ -1,0 +1,8 @@
+- name: Remove multiple files and directories
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - C:\Temp
+    - C:\Users\Public\Documents\old_file.txt
+    - C:\inetpub\wwwroot\archive_folder
