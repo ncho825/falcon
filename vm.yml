@@ -1,0 +1,104 @@
+---
+- name: Create Multiple VMware VMs
+  hosts: localhost # This playbook runs on the Ansible control node
+  connection: local # Since we're interacting with vCenter directly
+
+  vars:
+    vcenter_hostname: "your_vcenter_ip_or_hostname"
+    vcenter_username: "your_vcenter_username"
+    vcenter_password: "your_vcenter_password" # Consider using Ansible Vault for sensitive data
+    datacenter_name: "your_datacenter_name"
+    cluster_name: "your_cluster_name"
+    datastore_name: "your_datastore_name"
+    vm_network: "your_vm_network_name" # Name of the port group or network
+
+    # Define your VMs as a list of dictionaries
+    # Each dictionary represents a single VM with its desired properties
+    vms_to_create:
+      - name: "my_web_server_01"
+        template: "your_vm_template_name" # Name of the VM template
+        folder: "/your_datacenter_name/vm/your_vm_folder" # Optional: Folder to place the VM in
+        cpu: 2
+        memory_mb: 4096 # 4 GB
+        disk_size_gb: 50
+        ip_address: "192.168.1.101"
+        gateway: "192.168.1.1"
+        netmask: "255.255.255.0"
+        dns_servers: ["8.8.8.8", "8.8.4.4"]
+        power_on: true
+
+      - name: "my_db_server_01"
+        template: "your_vm_template_name"
+        folder: "/your_datacenter_name/vm/your_vm_folder"
+        cpu: 4
+        memory_mb: 8192 # 8 GB
+        disk_size_gb: 100
+        ip_address: "192.168.1.102"
+        gateway: "192.168.1.1"
+        netmask: "255.255.255.0"
+        dns_servers: ["8.8.8.8", "8.8.4.4"]
+        power_on: true
+
+      - name: "my_app_server_01"
+        template: "your_vm_template_name"
+        folder: "/your_datacenter_name/vm/your_vm_folder"
+        cpu: 2
+        memory_mb: 4096 # 4 GB
+        disk_size_gb: 50
+        ip_address: "192.168.1.103"
+        gateway: "192.168.1.1"
+        netmask: "255.255.255.0"
+        dns_servers: ["8.8.8.8", "8.8.4.4"]
+        power_on: true
+
+  tasks:
+    - name: Create or update VMware VMs
+      community.vmware.vmware_guest:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: false # Set to true in production if you have proper certs
+        datacenter: "{{ datacenter_name }}"
+        cluster: "{{ cluster_name }}"
+        datastore: "{{ datastore_name }}"
+        name: "{{ item.name }}" # VM name from the loop item
+        template: "{{ item.template }}" # Template name from the loop item
+        folder: "{{ item.folder | default(omit) }}" # Optional folder, omit if not specified
+        state: poweredon # Ensure the VM is powered on after creation
+        disk:
+          - size_gb: "{{ item.disk_size_gb }}"
+            type: thin
+            datastore: "{{ datastore_name }}"
+        hardware:
+          memory_mb: "{{ item.memory_mb }}"
+          num_cpus: "{{ item.cpu }}"
+        networks:
+          - name: "{{ vm_network }}"
+            type: static
+            ip: "{{ item.ip_address }}"
+            gateway: "{{ item.gateway }}"
+            netmask: "{{ item.netmask }}"
+            dns_servers: "{{ item.dns_servers }}"
+        customization:
+          hostname: "{{ item.name }}"
+          # Customize based on your OS type (e.g., Linux or Windows)
+          # For Linux:
+          #   autologon: false
+          #   domain: your.domain.com
+          #   dns_servers: "{{ item.dns_servers }}"
+          #   domain_search: ["your.domain.com"]
+          #   timezone: "Etc/UTC" # Example for Linux timezone
+          # For Windows:
+          #   autologon: false
+          #   timezone: 35 # Example for Windows timezone (e.g., Eastern Time)
+          #   product_id: "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" # Windows product ID
+          #   organization_name: "MyOrg"
+          #   owner_name: "Admin"
+          #   run_once: ["ipconfig /all > C:\\ipconfig.txt"] # Example run once command
+        power_on: "{{ item.power_on }}"
+      loop: "{{ vms_to_create }}" # Loop through the list of VMs defined in vars
+      register: vm_creation_result
+
+    - name: Display VM creation results
+      debug:
+        var: vm_creation_result
