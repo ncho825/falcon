@@ -1,0 +1,74 @@
+---
+- name: Verify Windows Update Installation and Prepare Results
+  hosts: all # Replace with your target Windows host group (e.g., 'web_servers' or 'all_windows')
+  gather_facts: false    # No need to gather all facts for this specific check
+
+  vars:
+    # Define a list of KB article IDs you want to check.
+    target_kb_ids:
+      - "KB1234567" # Example: "KB5005030"
+      - "KB9876543" # Another example KB
+      - "KB4567890" # And another
+
+  tasks:
+    - name: Check for the presence of each specified KB update
+      win_hotfix:
+        id: "{{ item }}"
+      register: hotfix_check_result
+      loop: "{{ target_kb_ids }}"
+      loop_control:
+        loop_var: item
+
+    - name: Prepare individual host's patch data for consolidation
+      # This task processes the results for the current host and creates a list
+      # of dictionaries, where each dictionary represents a row for a KB.
+      # This format is easier to consolidate later.
+      set_fact:
+        # 'host_patch_data' will contain a list of dictionaries for this host.
+        host_patch_data: "{{ hotfix_check_result.results | map('combine', {'hostname': inventory_hostname}) | list }}"
+
+- name: Consolidate and Save Combined Report on Designated Windows Server
+  # IMPORTANT: Replace 'designated_windows_server' with the actual name
+  # of your Windows server from your Ansible inventory where you want to save the report.
+  hosts: designated_windows_server # This play now runs on your specified Windows server
+  gather_facts: false
+
+  vars:
+    # Define the path on the designated Windows server where the combined CSV file will be saved.
+    # Ensure this path is valid and writable on your target Windows server.
+    consolidated_csv_path: "C:\\Ansible_Reports\\combined_windows_patch_status_{{ ansible_date_time.iso8601_basic }}.csv"
+
+  tasks:
+    - name: Ensure the target directory for combined CSV exists on designated server
+      # Using 'win_file' module for a Windows designated server.
+      win_file:
+        path: "{{ consolidated_csv_path | dirname }}"
+        state: directory
+
+    - name: Generate combined CSV content
+      # This task iterates through all hosts in the 'windows_servers' group (from the first play)
+      # and extracts their 'host_patch_data' to build a single CSV string.
+      # 'run_once: true' ensures this consolidation logic runs only once on the designated server.
+      run_once: true
+      set_fact:
+        # Start with the CSV header
+        combined_csv_content: |
+          Hostname,KB_ID,Status
+          {% for host in groups['windows_servers'] %}
+          {% for patch in hostvars[host].host_patch_data %}
+          "{{ patch.hostname }}","{{ patch.item }}","{{ 'Installed' if patch.installed else 'Not Installed' }}"
+          {% endfor %}
+          {% endfor %}
+
+    - name: Save combined patch check results to CSV file on designated Windows server
+      # The 'win_copy' module is used to write content to a file on the target Windows machine.
+      # Note: We are using 'content' argument, so 'win_copy' is suitable here.
+      win_copy:
+        content: "{{ combined_csv_content }}"
+        dest: "{{ consolidated_csv_path }}"
+      run_once: true # Ensures this task only runs once on the designated server
+
+    - name: Display confirmation of combined CSV file creation
+      debug:
+        msg: "Combined results saved to {{ consolidated_csv_path }} on {{ inventory_hostname }}."
+      run_once: true
