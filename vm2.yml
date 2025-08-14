@@ -1,0 +1,121 @@
+---
+- name: VMware Windows VM Provisioning and Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # vCenter Connection Details
+    vcenter_hostname: "your_vcenter_hostname_or_ip"
+    vcenter_username: "your_vcenter_username"
+    vcenter_password: "your_vcenter_password" # Consider using Ansible Vault for this
+
+    # VMware Infrastructure Details
+    datacenter_name: "YourDatacenter"
+    cluster_name: "YourCluster"
+    datastore_name: "YourDatastore"
+    vm_network: "YourVMNetwork" # Name of the port group/network for the VMs
+    
+    # Optional: Resource Pool and Folder (uncomment and set if needed)
+    # resource_pool: "YourResourcePool"
+    # vm_folder: "/YourDatacenter/vm/YourFolder"
+
+    # List of VMs to create/manage
+    vms_to_create:
+      - name: "webserver01"
+        template: "Windows_Server_2019_Template" # Name of your Windows Server template
+        ip_address: "192.168.1.101"
+        gateway: "192.168.1.1"
+        netmask: "255.255.255.0"
+        dns_servers: ["8.8.8.8", "8.8.4.4"]
+        # Uncomment and set if different from template or needed for customization
+        # disk_size_gb: 60
+        # memory_mb: 4096
+        # cpu: 2
+        # folder: "/YourDatacenter/vm/WebServers" # Example, overrides global vm_folder for this VM
+      - name: "dbserver01"
+        template: "Windows_Server_2019_Template"
+        ip_address: "192.168.1.102"
+        gateway: "192.168.1.1"
+        netmask: "255.255.255.0"
+        dns_servers: ["8.8.8.8", "8.8.4.4"]
+        # Uncomment and set if different from template or needed for customization
+        # disk_size_gb: 80
+        # memory_mb: 8192
+        # cpu: 4
+
+    # Credentials for logging into the VM's guest OS (for vmware_vm_shell)
+    vm_guest_username: "Administrator" # Common default for Windows
+    vm_guest_password: "YourVMGuestPassword" # !!! HIGHLY RECOMMEND USING ANSIBLE VAULT FOR THIS !!!
+
+  tasks:
+    - name: Create or Update VMware Windows VMs
+      community.vmware.vmware_guest:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: false # Set to true in production if you have proper certs
+        datacenter: "{{ datacenter_name }}"
+        cluster: "{{ cluster_name }}"
+        datastore: "{{ datastore_name }}"
+        resource_pool: "{{ resource_pool | default(omit) }}" # Optional resource pool
+        folder: "{{ vm_folder | default(omit) }}" # Optional folder for all VMs
+        name: "{{ item.name }}" # VM name from the loop item
+        template: "{{ item.template }}" # Template name from the loop item
+        # Use item.folder if defined, otherwise use vm_folder, otherwise omit
+        folder: "{{ item.folder | default(vm_folder, omit) }}"
+        state: poweredon # Ensure the VM is powered on after creation
+        # Uncomment if you want to override disk settings from template
+        # disk:
+        #   - size_gb: "{{ item.disk_size_gb | default(60) }}" # Default to 60GB if not specified per VM
+        #     type: thin
+        #     datastore: "{{ datastore_name }}"
+        # Uncomment if you want to override hardware settings from template
+        # hardware:
+        #   memory_mb: "{{ item.memory_mb | default(4096) }}" # Default to 4GB if not specified
+        #   num_cpus: "{{ item.cpu | default(2) }}" # Default to 2 vCPUs if not specified
+        networks:
+          - name: "{{ vm_network }}"
+            type: static
+            ip: "{{ item.ip_address }}"
+            gateway: "{{ item.gateway }}"
+            netmask: "{{ item.netmask }}"
+            dns_servers: "{{ item.dns_servers }}"
+        customization:
+          hostname: "{{ item.name }}"
+          # Windows specific customization (adjust as needed)
+          autologon: false
+          timezone: 35 # Example for Eastern Time (GMT-05:00) - check VMware docs for correct code
+          # product_id: "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" # Windows product ID
+          # organization_name: "YourOrganization"
+          # owner_name: "Admin"
+          # run_once: ["ipconfig /all > C:\\ipconfig.txt"] # Example run once command
+      loop: "{{ vms_to_create }}"
+      register: vm_creation_result
+
+    - name: Configure Hostname and DNS in Windows VMs
+      # This task uses the vmware_vm_shell module to execute PowerShell commands inside the VM.
+      # It relies on VMware Tools being installed and running within the guest OS.
+      community.vmware.vmware_vm_shell:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: false
+        # vm_id can be vm_name, uuid, instance_uuid, etc.
+        # We use instance_uuid which is returned by vmware_guest module.
+        vm_id: "{{ item.instance_uuid }}"
+        vm_id_type: "instance_uuid" # Explicitly state the type of vm_id
+        vm_username: "{{ vm_guest_username }}"
+        vm_password: "{{ vm_guest_password }}"
+        vm_shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        vm_shell_args: "-command" # Use -command for direct PowerShell commands
+        vm_cmd: |
+          Rename-Computer -NewName "{{ item.name }}" -Force;
+          Set-DnsClientServerAddress -InterfaceAlias "Ethernet0" -ServerAddresses "{{ item.dns_servers | join(',') }}"
+      loop: "{{ vm_creation_result.results }}"
+      when:
+        # Only attempt to configure if the VM was newly created or changed
+        - item.changed is defined and item.changed
+        # Ensure that vmware_guest_info contains the instance_uuid
+        - item.instance_uuid is defined
+      register: vm_shell_result
